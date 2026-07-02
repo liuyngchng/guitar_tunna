@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Shadow/depth layer -->
+    <path
+        android:fillColor="#20000000"
+        android:pathData="M38,34 C38,24 70,24 70,34 C74,48 68,64 54,80 C40,64 34,48 38,34 Z" />
+
+    <!-- Main pick shape - white -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,32 C38,22 70,22 70,32 C74,46 68,62 54,78 C40,62 34,46 38,32 Z" />
+
+    <!-- Inner highlight - top curve -->
+    <path
+        android:fillColor="#E8F5E9"
+        android:pathData="M42,34 C42,28 66,28 66,34 C68,44 64,52 54,60 C44,52 40,44 42,34 Z" />
+
+    <!-- 3 grip dots -->
+    <path
+        android:fillColor="#B0BEC5"
+        android:pathData="M50,44 m-2.5,0 a2.5,2.5 0 1,1 5,0 a2.5,2.5 0 1,1 -5,0" />
+    <path
+        android:fillColor="#B0BEC5"
+        android:pathData="M54,41 m-2.5,0 a2.5,2.5 0 1,1 5,0 a2.5,2.5 0 1,1 -5,0" />
+    <path
+        android:fillColor="#B0BEC5"
+        android:pathData="M58,44 m-2.5,0 a2.5,2.5 0 1,1 5,0 a2.5,2.5 0 1,1 -5,0" />
+</vector>

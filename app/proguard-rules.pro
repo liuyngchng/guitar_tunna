@@ -1,0 +1,1 @@
+# GuitarTuna ProGuard rules
