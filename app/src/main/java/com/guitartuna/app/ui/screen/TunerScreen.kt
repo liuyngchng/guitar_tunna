@@ -1,12 +1,17 @@
 package com.guitartuna.app.ui.screen
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,14 +23,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,9 +43,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,9 +64,11 @@ import kotlin.math.abs
 @Composable
 fun TunerScreen(
     uiState: TunerUiState,
-    onStartStop: () -> Unit,
+    darkTheme: Boolean,
     onSelectString: (Int) -> Unit,
-    onSelectAuto: () -> Unit,
+    onToggleAuto: () -> Unit,
+    onToggleReference: () -> Unit,
+    onToggleTheme: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -64,13 +77,18 @@ fun TunerScreen(
             .padding(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        StatusBar(uiState.tunerState)
+        TopBar(
+            isAuto = uiState.mode == TuningMode.AUTO,
+            darkTheme = darkTheme,
+            onToggleAuto = onToggleAuto,
+            onToggleTheme = onToggleTheme,
+        )
         Spacer(modifier = Modifier.height(12.dp))
         StringSelector(
             selectedIndex = uiState.selectedStringIndex,
+            autoDetectedIndex = uiState.autoDetectedIndex,
             mode = uiState.mode,
             onSelect = onSelectString,
-            onSelectAuto = onSelectAuto,
         )
         Spacer(modifier = Modifier.weight(0.3f))
         NoteDisplay(
@@ -80,82 +98,137 @@ fun TunerScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
         TuningMeter(cents = uiState.centsFromTarget, state = uiState.tunerState)
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
+        DirectionHint(cents = uiState.centsFromTarget, state = uiState.tunerState)
+        Spacer(modifier = Modifier.height(6.dp))
         CentsFrequencyRow(cents = uiState.centsFromTarget, frequency = uiState.detectedFrequency, state = uiState.tunerState)
+        Spacer(modifier = Modifier.height(12.dp))
+        ReferenceToneButton(
+            isPlaying = uiState.isPlayingReference,
+            targetNote = uiState.targetNote,
+            onClick = onToggleReference,
+        )
         Spacer(modifier = Modifier.weight(0.3f))
-        StartStopButton(isRunning = uiState.tunerState != TunerState.IDLE && uiState.tunerState != TunerState.ERROR, onClick = onStartStop)
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
 @Composable
-private fun StatusBar(state: TunerState) {
-    val (text, color) = when (state) {
-        TunerState.IDLE -> "点击下方按钮开始调音" to Color.Gray
-        TunerState.LISTENING -> "正在监听..." to TuneYellow
-        TunerState.DETECTING -> "检测中..." to TuneOrange
-        TunerState.LOCKED -> "已调准！" to TuneGreen
-        TunerState.ERROR -> "出错了" to TuneRed
+private fun TopBar(isAuto: Boolean, darkTheme: Boolean, onToggleAuto: () -> Unit, onToggleTheme: () -> Unit) {
+    val dimColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.End,
+    ) {
+        Text(
+            text = "自动",
+            fontSize = 14.sp,
+            color = if (isAuto) TuneGreen else dimColor,
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Switch(
+            checked = isAuto,
+            onCheckedChange = { onToggleAuto() },
+            modifier = Modifier.padding(start = 0.dp),
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = TuneGreen,
+                checkedTrackColor = TuneGreen.copy(alpha = 0.3f),
+            ),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        IconButton(onClick = onToggleTheme, modifier = Modifier.size(36.dp)) {
+            Icon(
+                imageVector = if (darkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                contentDescription = if (darkTheme) "切换亮色主题" else "切换暗色主题",
+                tint = dimColor,
+                modifier = Modifier.size(22.dp),
+            )
+        }
     }
-    Text(text = text, color = color, fontSize = 14.sp, fontWeight = FontWeight.Medium)
 }
 
 @Composable
 private fun StringSelector(
     selectedIndex: Int,
+    autoDetectedIndex: Int?,
     mode: TuningMode,
     onSelect: (Int) -> Unit,
-    onSelectAuto: () -> Unit,
 ) {
+    val gaugeWidths = listOf(9f, 7f, 5.6f, 4f, 2.8f, 2f) // E A D G B e
+    val labels = listOf("E", "A", "D", "G", "B", "e")
+    val isAuto = mode == TuningMode.AUTO
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Bottom,
     ) {
-        StringChip("E", selected = mode == TuningMode.MANUAL && selectedIndex == 0) { onSelect(0) }
-        StringChip("A", selected = mode == TuningMode.MANUAL && selectedIndex == 1) { onSelect(1) }
-        StringChip("D", selected = mode == TuningMode.MANUAL && selectedIndex == 2) { onSelect(2) }
-        StringChip("G", selected = mode == TuningMode.MANUAL && selectedIndex == 3) { onSelect(3) }
-        StringChip("B", selected = mode == TuningMode.MANUAL && selectedIndex == 4) { onSelect(4) }
-        StringChip("e", selected = mode == TuningMode.MANUAL && selectedIndex == 5) { onSelect(5) }
-        Spacer(modifier = Modifier.width(8.dp))
+        labels.forEachIndexed { index, label ->
+            val isSelected = if (isAuto) autoDetectedIndex == index else selectedIndex == index
+            StringChipWithGauge(
+                label = label,
+                selected = isSelected,
+                gaugeDp = gaugeWidths[index],
+                onClick = { onSelect(index) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun StringChipWithGauge(label: String, selected: Boolean, gaugeDp: Float, onClick: () -> Unit) {
+    val lineColor = if (selected) TuneGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(horizontal = 2.dp),
+    ) {
         FilterChip(
-            selected = mode == TuningMode.AUTO,
-            onClick = onSelectAuto,
-            label = { Text("自动", fontWeight = if (mode == TuningMode.AUTO) FontWeight.Bold else FontWeight.Normal) },
+            selected = selected,
+            onClick = onClick,
+            label = { Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal) },
             colors = FilterChipDefaults.filterChipColors(
                 selectedContainerColor = TuneGreen.copy(alpha = 0.2f),
                 selectedLabelColor = TuneGreen,
             ),
         )
+        Spacer(modifier = Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .width(gaugeDp.dp)
+                .height(14.dp)
+                .background(lineColor, CircleShape),
+        )
     }
 }
 
 @Composable
-private fun StringChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal) },
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = TuneGreen.copy(alpha = 0.2f),
-            selectedLabelColor = TuneGreen,
-        ),
-        modifier = Modifier.padding(horizontal = 2.dp),
-    )
-}
-
-@Composable
 private fun NoteDisplay(note: String, cents: Float, state: TunerState) {
+    val dimColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
     val color by animateColorAsState(
-        targetValue = centsColor(abs(cents), state),
-        animationSpec = tween(150),
+        targetValue = centsColor(abs(cents), state, dimColor),
+        animationSpec = tween(80),
     )
+    val infiniteTransition = rememberInfiniteTransition()
+    val pulseScale = if (state == TunerState.LOCKED) {
+        infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.08f,
+            animationSpec = infiniteRepeatable(animation = tween(500), repeatMode = RepeatMode.Reverse),
+        ).value
+    } else 1f
+
     Text(
         text = note,
         fontSize = 72.sp,
         fontWeight = FontWeight.Bold,
         color = color,
+        modifier = if (state == TunerState.LOCKED) {
+            Modifier
+                .shadow(elevation = 16.dp, ambientColor = TuneGreen, spotColor = TuneGreen)
+                .graphicsLayer { scaleX = pulseScale; scaleY = pulseScale }
+        } else Modifier,
     )
 }
 
@@ -163,9 +236,11 @@ private fun NoteDisplay(note: String, cents: Float, state: TunerState) {
 private fun TuningMeter(cents: Float, state: TunerState) {
     val animatedCents by animateFloatAsState(
         targetValue = cents.coerceIn(-50f, 50f),
-        animationSpec = tween(80),
+        animationSpec = tween(30),
     )
     val needleFraction = ((animatedCents + 50f) / 100f).coerceIn(0f, 1f)
+    val needleColor = MaterialTheme.colorScheme.onSurface
+    val tickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
 
     Canvas(
         modifier = Modifier
@@ -195,7 +270,7 @@ private fun TuningMeter(cents: Float, state: TunerState) {
         // Needle
         val needleX = needleFraction * size.width
         drawLine(
-            color = Color.White,
+            color = needleColor,
             start = Offset(needleX, 0f),
             end = Offset(needleX, size.height),
             strokeWidth = 3f,
@@ -204,7 +279,7 @@ private fun TuningMeter(cents: Float, state: TunerState) {
 
         // Center tick mark
         drawLine(
-            color = Color.White.copy(alpha = 0.4f),
+            color = tickColor,
             start = Offset(size.width / 2, 0f),
             end = Offset(size.width / 2, size.height),
             strokeWidth = 1f,
@@ -214,7 +289,8 @@ private fun TuningMeter(cents: Float, state: TunerState) {
 
 @Composable
 private fun CentsFrequencyRow(cents: Float, frequency: Float, state: TunerState) {
-    val color = centsColor(abs(cents), state)
+    val dimColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+    val color = centsColor(abs(cents), state, dimColor)
     val centsText = if (state == TunerState.IDLE || state == TunerState.LISTENING) {
         "-- 音分"
     } else {
@@ -228,31 +304,77 @@ private fun CentsFrequencyRow(cents: Float, frequency: Float, state: TunerState)
     ) {
         Text(text = centsText, color = color, fontSize = 18.sp, fontWeight = FontWeight.Medium)
         Spacer(modifier = Modifier.width(32.dp))
-        Text(text = freqText, color = Color.Gray, fontSize = 18.sp)
+        Text(text = freqText, color = dimColor, fontSize = 18.sp)
     }
 }
 
 @Composable
-private fun StartStopButton(isRunning: Boolean, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        shape = CircleShape,
-        modifier = Modifier.size(72.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (isRunning) TuneRed else TuneGreen,
-        ),
+private fun DirectionHint(cents: Float, state: TunerState) {
+    if (state == TunerState.IDLE || state == TunerState.LISTENING) return
+
+    val dimColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+    val absCents = abs(cents)
+    val isInTune = absCents <= 2.5f
+    val isFlat = cents < -2.5f
+    val isSharp = cents > 2.5f
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
-            contentDescription = if (isRunning) "Stop" else "Start",
-            modifier = Modifier.size(32.dp),
-            tint = Color.Black,
+        Text(
+            text = "◀ 偏低",
+            fontSize = 16.sp,
+            fontWeight = if (isFlat) FontWeight.Bold else FontWeight.Normal,
+            color = if (isFlat) TuneOrange else dimColor,
+        )
+        Text(
+            text = "● 准确",
+            fontSize = 16.sp,
+            fontWeight = if (isInTune) FontWeight.Bold else FontWeight.Normal,
+            color = if (isInTune) TuneGreen else dimColor,
+        )
+        Text(
+            text = "偏高 ▶",
+            fontSize = 16.sp,
+            fontWeight = if (isSharp) FontWeight.Bold else FontWeight.Normal,
+            color = if (isSharp) TuneOrange else dimColor,
         )
     }
 }
 
-private fun centsColor(absCents: Float, state: TunerState): Color {
-    if (state == TunerState.IDLE || state == TunerState.LISTENING) return Color.Gray
+@Composable
+private fun ReferenceToneButton(isPlaying: Boolean, targetNote: String, onClick: () -> Unit) {
+    val dimColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+    val buttonBg = if (isPlaying) TuneOrange else MaterialTheme.colorScheme.surfaceVariant
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = "参考音",
+            fontSize = 12.sp,
+            color = dimColor,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Button(
+            onClick = onClick,
+            shape = CircleShape,
+            modifier = Modifier.size(48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = buttonBg,
+            ),
+        ) {
+            Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = "播放参考音 $targetNote",
+                modifier = Modifier.size(24.dp),
+                tint = if (isPlaying) Color.Black else TuneGreen,
+            )
+        }
+    }
+}
+
+private fun centsColor(absCents: Float, state: TunerState, dimColor: Color = Color.Gray): Color {
+    if (state == TunerState.IDLE || state == TunerState.LISTENING) return dimColor
     if (state == TunerState.LOCKED) return TuneGreen
     return when {
         absCents <= 2.5f -> TuneGreen

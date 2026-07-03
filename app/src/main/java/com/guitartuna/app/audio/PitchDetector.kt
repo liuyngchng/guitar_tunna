@@ -1,7 +1,6 @@
 package com.guitartuna.app.audio
 
 import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.pow
@@ -11,7 +10,7 @@ object PitchDetector {
 
     private const val MIN_FREQ = 60f
     private const val MAX_FREQ = 420f
-    private const val CONFIDENCE_THRESHOLD = 3.5f
+    private const val CONFIDENCE_THRESHOLD = 4.5f
 
     private val NOTE_NAMES = arrayOf(
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
@@ -40,16 +39,11 @@ object PitchDetector {
         val n = samples.size
         val floatData = FloatArray(n) { i -> samples[i] / 32768f }
 
-        // Hann window
-        val windowed = FloatArray(n) { i ->
-            floatData[i] * (0.5f * (1f - cos(2.0 * Math.PI * i / (n - 1)))).toFloat()
-        }
-
         // RMS amplitude gate
         var rms = 0f
-        for (v in windowed) rms += v * v
+        for (v in floatData) rms += v * v
         rms = kotlin.math.sqrt(rms / n)
-        if (rms < 0.005f) return PitchResult(detected = false)
+        if (rms < 0.01f) return PitchResult(detected = false)
 
         // Autocorrelation
         val minLag = (sampleRate / MAX_FREQ).toInt()
@@ -59,26 +53,85 @@ object PitchDetector {
         for (tau in minLag..maxLag) {
             var sum = 0f
             for (i in tau until n) {
-                sum += windowed[i] * windowed[i - tau]
+                sum += floatData[i] * floatData[i - tau]
             }
             ac[tau] = sum / (n - tau)
         }
 
-        // Find peak
-        var peakLag = minLag
-        var peakVal = ac[minLag]
+        // Compute mean and threshold
         var acSum = 0f
-        for (tau in minLag..maxLag) {
-            acSum += ac[tau]
-            if (ac[tau] > peakVal) {
-                peakVal = ac[tau]
-                peakLag = tau
+        for (tau in minLag..maxLag) acSum += ac[tau]
+        val acMean = acSum / (maxLag - minLag + 1)
+        val threshold = acMean * CONFIDENCE_THRESHOLD
+
+        // Collect all local peaks above threshold
+        data class Peak(val lag: Int, val value: Float)
+        val peaks = mutableListOf<Peak>()
+        for (tau in minLag + 1 until maxLag) {
+            if (ac[tau] > threshold && ac[tau] > ac[tau - 1] && ac[tau] >= ac[tau + 1]) {
+                peaks.add(Peak(tau, ac[tau]))
             }
         }
 
-        val acMean = acSum / (maxLag - minLag + 1)
-        val confidence = if (acMean > 0f) peakVal / acMean else 0f
+        var peakLag: Int
+        var peakVal: Float
 
+        if (peaks.isEmpty()) {
+            // No significant peaks — use global max
+            peakLag = minLag
+            peakVal = ac[minLag]
+            for (tau in minLag..maxLag) {
+                if (ac[tau] > peakVal) {
+                    peakVal = ac[tau]
+                    peakLag = tau
+                }
+            }
+        } else {
+            // Score peaks: prefer ones matching guitar string frequencies
+            var bestLag = peaks.first().lag
+            var bestVal = peaks.first().value
+            var bestScore = -1f
+
+            for ((lag, value) in peaks) {
+                val freq = sampleRate / lag.toFloat()
+                val nearest = findNearestString(freq)
+                val centsDist = abs(ln(freq / nearest.frequency))
+                // Score: strong peak close to a guitar string wins
+                val score = value / (0.01f + centsDist)
+
+                if (score > bestScore) {
+                    bestScore = score
+                    bestLag = lag
+                    bestVal = value
+                }
+            }
+            peakLag = bestLag
+            peakVal = bestVal
+        }
+
+        // Sub-harmonic check: if there's a stronger peak at 1/2 or 1/3 the lag,
+        // it's the true fundamental (e.g. E4 detected as A2 via 3x-period peak)
+        for (divisor in 2..3) {
+            val candidateLag = peakLag / divisor
+            if (candidateLag >= minLag) {
+                val start = (candidateLag - 2).coerceAtLeast(minLag)
+                val end = (candidateLag + 2).coerceAtMost(maxLag)
+                var bestLocal = 0f
+                var bestLocalLag = candidateLag
+                for (tau in start..end) {
+                    if (ac[tau] > bestLocal) {
+                        bestLocal = ac[tau]
+                        bestLocalLag = tau
+                    }
+                }
+                if (bestLocal > peakVal) {
+                    peakLag = bestLocalLag
+                    peakVal = bestLocal
+                }
+            }
+        }
+
+        val confidence = if (acMean > 0f) peakVal / acMean else 0f
         if (confidence < CONFIDENCE_THRESHOLD) {
             return PitchResult(detected = false)
         }
@@ -114,6 +167,6 @@ object PitchDetector {
     }
 
     fun findNearestString(frequency: Float): GuitarString {
-        return GUITAR_STRINGS.minBy { abs(frequency - it.frequency) }
+        return GUITAR_STRINGS.minBy { abs(ln(frequency / it.frequency)) }
     }
 }

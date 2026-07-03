@@ -13,7 +13,7 @@ class AudioEngine {
 
     private var audioRecord: AudioRecord? = null
     private val sampleRate = 44100
-    private val frameSize = 2048
+    private val frameSize = 8192
 
     private val _pitchResult = MutableStateFlow(PitchDetector.PitchResult(detected = false))
     val pitchResult: StateFlow<PitchDetector.PitchResult> = _pitchResult

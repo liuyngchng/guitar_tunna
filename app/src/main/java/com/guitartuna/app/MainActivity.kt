@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,35 +27,36 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            GuitarTunaTheme {
+            var darkTheme by remember { mutableStateOf(true) }
+            GuitarTunaTheme(darkTheme = darkTheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val viewModel: TunerViewModel = viewModel()
                     val uiState by viewModel.uiState.collectAsState()
-                    var pendingStart by remember { mutableStateOf(false) }
+                    var didAutoStart by remember { mutableStateOf(false) }
 
                     val permissionLauncher = rememberLauncherForActivityResult(
                         ActivityResultContracts.RequestPermission()
                     ) { granted ->
-                        if (granted && pendingStart) {
+                        if (granted) viewModel.startTuning()
+                    }
+
+                    LaunchedEffect(Unit) {
+                        if (didAutoStart) return@LaunchedEffect
+                        didAutoStart = true
+                        if (hasRecordPermission()) {
                             viewModel.startTuning()
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
-                        pendingStart = false
                     }
 
                     TunerScreen(
                         uiState = uiState,
-                        onStartStop = {
-                            if (viewModel.isRunning()) {
-                                viewModel.stopTuning()
-                            } else if (hasRecordPermission()) {
-                                viewModel.startTuning()
-                            } else {
-                                pendingStart = true
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            }
-                        },
+                        darkTheme = darkTheme,
                         onSelectString = { index -> viewModel.selectString(index) },
-                        onSelectAuto = { viewModel.selectAuto() },
+                        onToggleAuto = { viewModel.toggleAuto() },
+                        onToggleReference = { viewModel.toggleReference() },
+                        onToggleTheme = { darkTheme = !darkTheme },
                     )
                 }
             }

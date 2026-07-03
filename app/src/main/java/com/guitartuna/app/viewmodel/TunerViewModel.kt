@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.guitartuna.app.audio.AudioEngine
 import com.guitartuna.app.audio.PitchDetector
+import com.guitartuna.app.audio.ReferenceToneGenerator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,27 +27,37 @@ data class TunerUiState(
     val selectedStringIndex: Int = 0,
     val confidence: Float = 0f,
     val errorMessage: String = "",
+    val isPlayingReference: Boolean = false,
+    val autoDetectedIndex: Int? = null,
 )
 
 class TunerViewModel : ViewModel() {
 
     private val engine = AudioEngine()
+    private val referenceTone = ReferenceToneGenerator()
     private var captureJob: Job? = null
+    private var referenceJob: Job? = null
 
     private val _uiState = MutableStateFlow(TunerUiState())
     val uiState: StateFlow<TunerUiState> = _uiState
 
     private var smoothedFrequency = 0f
     private var smoothedCents = 0f
-    private val smoothingFactor = 0.25f
+    private val smoothingFactor = 0.50f
     private var inTuneFrameCount = 0
     private val inTuneThreshold = 2f
     private val lockFrames = 15
+    private var lastStringIndex = 0
+    private var stringSwitchCount = 0
+    private val stringSwitchFrames = 5
+    private var noDetectionCount = 0
+    private val holdFrames = 6
 
     fun isRunning(): Boolean = engine.isRunning
 
     fun startTuning() {
         if (engine.isRunning) return
+        stopReference()
         captureJob = viewModelScope.launch {
             try {
                 _uiState.update { it.copy(tunerState = TunerState.LISTENING, errorMessage = "") }
@@ -72,7 +83,10 @@ class TunerViewModel : ViewModel() {
         smoothedFrequency = 0f
         smoothedCents = 0f
         inTuneFrameCount = 0
-        _uiState.update { it.copy(tunerState = TunerState.IDLE, detectedNote = "--", detectedFrequency = 0f, centsFromTarget = 0f, confidence = 0f) }
+        lastStringIndex = 0
+        stringSwitchCount = 0
+        noDetectionCount = 0
+        _uiState.update { it.copy(tunerState = TunerState.IDLE, detectedNote = "--", detectedFrequency = 0f, centsFromTarget = 0f, confidence = 0f, autoDetectedIndex = null) }
     }
 
     fun selectString(index: Int) {
@@ -87,20 +101,64 @@ class TunerViewModel : ViewModel() {
         }
     }
 
-    fun selectAuto() {
-        _uiState.update { it.copy(mode = TuningMode.AUTO) }
+    fun toggleAuto() {
+        val current = _uiState.value
+        if (current.mode == TuningMode.AUTO) {
+            val gs = PitchDetector.GUITAR_STRINGS[0]
+            _uiState.update {
+                it.copy(
+                    mode = TuningMode.MANUAL,
+                    selectedStringIndex = 0,
+                    targetNote = gs.name,
+                    targetFrequency = gs.frequency,
+                    autoDetectedIndex = null,
+                )
+            }
+        } else {
+            _uiState.update {
+                it.copy(mode = TuningMode.AUTO, autoDetectedIndex = null)
+            }
+        }
+    }
+
+    fun playReference() {
+        if (referenceTone.isPlaying) return
+        referenceJob = viewModelScope.launch {
+            _uiState.update { it.copy(isPlayingReference = true) }
+            referenceTone.play(_uiState.value.targetFrequency)
+            _uiState.update { it.copy(isPlayingReference = false) }
+        }
+    }
+
+    fun stopReference() {
+        referenceJob?.cancel()
+        referenceJob = null
+        referenceTone.stop()
+        _uiState.update { it.copy(isPlayingReference = false) }
+    }
+
+    fun toggleReference() {
+        if (referenceTone.isPlaying) stopReference() else playReference()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopTuning()
+        stopReference()
     }
 
     private fun processPitchResult(result: PitchDetector.PitchResult) {
         val currentState = _uiState.value
 
         if (!result.detected) {
-            if (currentState.tunerState != TunerState.LISTENING) {
-                _uiState.update { it.copy(tunerState = TunerState.LISTENING, detectedNote = "--", detectedFrequency = 0f, centsFromTarget = 0f, confidence = 0f) }
-            }
+            noDetectionCount++
             inTuneFrameCount = 0
+            if (noDetectionCount >= holdFrames && currentState.tunerState != TunerState.LISTENING) {
+                _uiState.update { it.copy(tunerState = TunerState.LISTENING, detectedNote = "--", detectedFrequency = 0f, centsFromTarget = 0f, confidence = 0f, autoDetectedIndex = null) }
+            }
             return
         }
+        noDetectionCount = 0
 
         // Exponential smoothing
         smoothedFrequency = if (smoothedFrequency == 0f) {
@@ -139,12 +197,23 @@ class TunerViewModel : ViewModel() {
             else -> TunerState.LISTENING
         }
 
-        // Auto-select string
-        val autoIndex = if (state.mode == TuningMode.AUTO) {
-            PitchDetector.GUITAR_STRINGS.indexOfFirst { it.name == targetNote }.coerceAtLeast(0)
-        } else {
-            state.selectedStringIndex
-        }
+        // Auto-detect string zone with hysteresis
+        val autoDetected = if (state.mode == TuningMode.AUTO) {
+            val newIndex = PitchDetector.GUITAR_STRINGS.indexOfFirst { it.name == targetNote }.coerceAtLeast(0)
+            if (newIndex == lastStringIndex) {
+                stringSwitchCount = 0
+                newIndex
+            } else {
+                stringSwitchCount++
+                if (stringSwitchCount >= stringSwitchFrames) {
+                    lastStringIndex = newIndex
+                    stringSwitchCount = 0
+                    newIndex
+                } else {
+                    lastStringIndex
+                }
+            }
+        } else null
 
         _uiState.update {
             it.copy(
@@ -154,7 +223,7 @@ class TunerViewModel : ViewModel() {
                 centsFromTarget = smoothedCents,
                 targetNote = targetNote,
                 targetFrequency = targetFreq,
-                selectedStringIndex = autoIndex,
+                autoDetectedIndex = autoDetected,
                 confidence = result.confidence,
             )
         }
